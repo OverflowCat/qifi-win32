@@ -114,13 +114,16 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wp, LPARAM lp) {
                 }
             }
 
-            EndDialog(hDlg, IDOK);
+            ShowWindow(hDlg, SW_HIDE);
 
             /* Launch QR window */
             qr_window_run(g_filePath, &s);
 
             if (s.prefix && s.prefix[0])
                 free((void *)s.prefix);
+
+            ShowWindow(hDlg, SW_SHOW);
+            SetForegroundWindow(hDlg);
             return TRUE;
         }
 
