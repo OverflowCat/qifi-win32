@@ -1,0 +1,55 @@
+/*
+ * resource.rc — Win32 dialog template for Qifi settings
+ *
+ * Note: UPDOWN_CLASS and UDS_* constants are not available to the
+ * resource compiler, so we use their literal string/values here.
+ * UPDOWN_CLASS = "msctls_updown32"
+ * UDS_SETBUDDYINT|UDS_ARROWKEYS|UDS_ALIGNRIGHT = 0x0043
+ */
+
+#include "winresrc.h"
+#include "resource.h"
+
+IDD_SETTINGS DIALOGEX 0, 0, 330, 290
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Qifi - Settings"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    /* ---- General ---- */
+    GROUPBOX        "General", -1, 7, 7, 150, 65, WS_GROUP
+
+    LTEXT           "FPS:", -1, 15, 22, 25, 10
+    EDITTEXT        IDC_FPS, 42, 20, 35, 14, ES_NUMBER
+    CONTROL         "", IDC_FPS_SPIN, "msctls_updown32",
+                    0x0043, 77, 20, 12, 14
+
+    LTEXT           "Slice (bytes):", -1, 15, 42, 55, 10
+    EDITTEXT        IDC_SLICE, 72, 40, 35, 14, ES_NUMBER
+    CONTROL         "", IDC_SLICE_SPIN, "msctls_updown32",
+                    0x0043, 107, 40, 12, 14
+
+    /* ---- Error Correction ---- */
+    GROUPBOX        "Error Correction", -1, 163, 7, 160, 65, WS_GROUP
+    AUTORADIOBUTTON "Low (7%)",       IDC_ECC_LOW,  172, 20, 70, 12, WS_TABSTOP
+    AUTORADIOBUTTON "Medium (15%)",   IDC_ECC_MED,  172, 35, 70, 12
+    AUTORADIOBUTTON "Quartile (25%)", IDC_ECC_QUART, 245, 20, 75, 12
+    AUTORADIOBUTTON "High (30%)",     IDC_ECC_HIGH, 245, 35, 75, 12
+
+    /* ---- URL Prefix ---- */
+    GROUPBOX        "URL Prefix (optional)", -1, 7, 78, 316, 38, WS_GROUP
+    EDITTEXT        IDC_PREFIX, 14, 92, 302, 14, ES_AUTOHSCROLL
+
+    /* ---- File ---- */
+    GROUPBOX        "File", -1, 7, 122, 316, 50, WS_GROUP
+    EDITTEXT        IDC_FILE_PATH, 14, 138, 250, 14, ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "Browse...", IDC_BROWSE, 270, 137, 46, 16
+
+    /* ---- Description ---- */
+    LTEXT           "Port of qifi to Win32. Reads a file, Luby-Transform encodes"
+                    " it, and displays QR codes in a fountain loop.",
+                    -1, 14, 178, 300, 24
+
+    /* ---- Buttons ---- */
+    DEFPUSHBUTTON   "Start",  IDC_START, 200, 265, 56, 18
+    PUSHBUTTON      "Cancel", IDCANCEL, 263, 265, 56, 18
+END
