@@ -27,10 +27,11 @@ add_executable(qifi-win32 WIN32
     resource.rc
 )
 
-target_include_directories(qifi-win32 PRIVATE src lib)
+target_include_directories(qifi-win32 PRIVATE . src lib)
 target_link_libraries(qifi-win32 PRIVATE qrcodegen)
 
 # --- zlib ---
+set(ZLIB_USE_STATIC_LIBS ON)
 find_package(ZLIB REQUIRED)
 target_link_libraries(qifi-win32 PRIVATE ZLIB::ZLIB)
 

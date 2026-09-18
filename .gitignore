@@ -1,0 +1,30 @@
+# Build directories
+/build/
+/build-*/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+install_manifest.txt
+
+# C/C++ build artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.res
+*.exe
+*.dll
+*.pdb
+*.ilk
+
+# MinGW resource output
+resource.res
+
+# Visual Studio / editor files
+.vs/
+*.suo
+*.user
