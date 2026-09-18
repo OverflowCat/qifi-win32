@@ -5,9 +5,9 @@
 #include <windows.h>
 #include <stdbool.h>
 
-#define WINDOW_W   520
-#define WINDOW_H   580
-#define QR_AREA    480
+#define WINDOW_W   560
+#define WINDOW_H   640
+#define QR_AREA    440
 
 typedef struct {
     int         fps;

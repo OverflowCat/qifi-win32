@@ -242,6 +242,14 @@ static const char  *g_contentType;
 static const char  *g_prefix;
 static int          g_fps;
 static enum qrcodegen_Ecc g_ecl;
+static DWORD        g_startTick = 0;
+
+/* Per-frame block debug info */
+#define BLOCK_HISTORY 64
+typedef struct { int degree; int indices[32]; } BlockInfo;
+static BlockInfo    g_curBlock;
+static BlockInfo    g_blockHist[BLOCK_HISTORY];
+static int          g_histIdx = 0;
 
 /* Off-screen back buffer — drawn to once per frame, then blitted to avoid flicker */
 static HDC     g_memDC   = NULL;
@@ -264,6 +272,11 @@ static void generate_qr_text(char *dst, int dstCap) {
     lt_pick_indices(g_enc.k, degree, indices);
     numIdx = degree;
 
+    /* Record current block info for debug display */
+    g_curBlock.degree = degree;
+    for (int i = 0; i < degree && i < 32; i++)
+        g_curBlock.indices[i] = indices[i];
+
     memset(blockData, 0, g_enc.slice_size);
     for (int i = 0; i < degree; i++)
         for (int j = 0; j < g_enc.slice_size; j++)
@@ -279,6 +292,10 @@ static void generate_qr_text(char *dst, int dstCap) {
         off = plen;
     }
     base64_encode(binary, binLen, dst + off);
+
+    /* Append to history ring buffer */
+    g_blockHist[g_histIdx % BLOCK_HISTORY] = g_curBlock;
+    g_histIdx++;
 }
 
 /* ========================================================================
@@ -322,7 +339,14 @@ static LRESULT CALLBACK qrWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         /* Use encodeBinary to guarantee byte-for-byte preservation of the
          * base64 string.  encodeText may choose numeric/alphanumeric mode
          * which changes the QR codewords and can confuse the receiver's
-         * toUint8Array() decoder. */
+         * toUint8Array() decoder.
+         *
+         * IMPORTANT: Do NOT use qrcodegen_Mask_AUTO — it tries all 8 masks
+         * and computes penalty scores, which takes 50-100ms+ for larger QR
+         * versions.  At 30 FPS (33ms/frame) this blocks the message loop,
+         * WM_TIMER cannot fire on schedule, and the receiver sees the same
+         * stale QR code for hundreds of milliseconds.  A fixed mask is
+         * ~100x faster and perfectly scannable. */
         uint8_t qrcode[qrcodegen_BUFFER_LEN_MAX];
         uint8_t tempbuf[qrcodegen_BUFFER_LEN_MAX];
         uint8_t databuf[qrcodegen_BUFFER_LEN_MAX];
@@ -332,7 +356,7 @@ static LRESULT CALLBACK qrWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                           g_ecl,
                                           qrcodegen_VERSION_MIN,
                                           qrcodegen_VERSION_MAX,
-                                          qrcodegen_Mask_AUTO,
+                                          qrcodegen_Mask_2,
                                           false);
 
         if (ok) {
@@ -371,19 +395,64 @@ static LRESULT CALLBACK qrWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
 
         /* Status bar at bottom */
-        int textY = QR_AREA + 30;
+        int textY = QR_AREA + 15;
         SetBkMode(mdc, TRANSPARENT);
+
+        DWORD elapsed = GetTickCount() - g_startTick;
+        double secs = elapsed / 1000.0;
+        double dataRate = secs > 0 ? (g_frame * (double)g_enc.slice_size) / secs / 1024.0 : 0;
+        int bytesPerFrame = (int)((4 + (double)g_curBlock.degree * 4 + 16 + g_enc.slice_size) * 4 / 3);
+
+        /* Row 1: filename */
         SetTextColor(mdc, RGB(0, 0, 0));
+        char ln[512];
+        sprintf(ln, "%s  (%s, %d bytes)", g_filename, g_contentType, g_enc.byte_count);
+        RECT r1 = {10, textY, rc.right - 10, textY + 16};
+        DrawTextA(mdc, ln, -1, &r1, DT_LEFT | DT_SINGLELINE); textY += 18;
 
-        char line1[512], line2[256];
-        sprintf(line1, "%s  (%s)", g_filename, g_contentType);
-        sprintf(line2, "Frame: %d | Slice: %d | Blocks: %d | %d FPS",
-                g_frame, g_enc.slice_size, g_enc.k, g_fps);
+        /* Row 2: current block */
+        sprintf(ln, "Block #%d  deg=%d  idx=[",
+                g_frame, g_curBlock.degree);
+        for (int i = 0; i < g_curBlock.degree && i < 8; i++) {
+            char tmp[16];
+            sprintf(tmp, "%s%d", i ? "," : "", g_curBlock.indices[i]);
+            strcat(ln, tmp);
+        }
+        if (g_curBlock.degree > 8) strcat(ln, ",...");
+        strcat(ln, "]");
+        SetTextColor(mdc, RGB(0, 80, 160));
+        RECT r2 = {10, textY, rc.right - 10, textY + 16};
+        DrawTextA(mdc, ln, -1, &r2, DT_LEFT | DT_SINGLELINE); textY += 18;
 
-        RECT tr1 = {10, textY, rc.right - 10, textY + 18};
-        DrawTextA(mdc, line1, -1, &tr1, DT_LEFT | DT_SINGLELINE);
-        RECT tr2 = {10, textY + 20, rc.right - 10, textY + 38};
-        DrawTextA(mdc, line2, -1, &tr2, DT_LEFT | DT_SINGLELINE);
+        /* Row 3: encoding stats */
+        sprintf(ln, "k=%d  slice=%d  checksum=0x%08X  b64=%d",
+                g_enc.k, g_enc.slice_size, g_enc.checksum, textLen);
+        SetTextColor(mdc, RGB(80, 80, 80));
+        RECT r3 = {10, textY, rc.right - 10, textY + 16};
+        DrawTextA(mdc, ln, -1, &r3, DT_LEFT | DT_SINGLELINE); textY += 18;
+
+        /* Row 4: timing & rate */
+        sprintf(ln, "Frame %d | %d FPS | %.1fs elapsed | %.1f KB/s | ~%d B/frame",
+                g_frame, g_fps, secs, dataRate, bytesPerFrame);
+        SetTextColor(mdc, RGB(0, 0, 0));
+        RECT r4 = {10, textY, rc.right - 10, textY + 16};
+        DrawTextA(mdc, ln, -1, &r4, DT_LEFT | DT_SINGLELINE); textY += 18;
+
+        /* Row 5: recent block history (last 16 blocks) */
+        {
+            char hist[512] = "";
+            int n = g_histIdx < 16 ? g_histIdx : 16;
+            for (int i = 0; i < n; i++) {
+                int idx = (g_histIdx - n + i + BLOCK_HISTORY) % BLOCK_HISTORY;
+                char tmp[32];
+                sprintf(tmp, "%s%d", i ? " " : "", g_blockHist[idx].degree);
+                strcat(hist, tmp);
+            }
+            sprintf(ln, "Recent degrees [%d]: %s", g_histIdx, hist);
+            SetTextColor(mdc, RGB(100, 100, 100));
+            RECT r5 = {10, textY, rc.right - 10, textY + 16};
+            DrawTextA(mdc, ln, -1, &r5, DT_LEFT | DT_SINGLELINE); textY += 18;
+        }
 
         /* Single blit to screen — this is what removes the flicker */
         BitBlt(hdc, 0, 0, g_memW, g_memH, mdc, 0, 0, SRCCOPY);
@@ -511,6 +580,11 @@ bool qr_window_run(const char *filepath, const QifiSettings *settings) {
 
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
+
+    g_startTick = GetTickCount();
+    g_frame = 0;
+    g_histIdx = 0;
+    memset(g_blockHist, 0, sizeof(g_blockHist));
 
     SetTimer(hwnd, TIMER_ID, 1000 / g_fps, NULL);
 
