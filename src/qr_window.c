@@ -243,6 +243,13 @@ static const char  *g_prefix;
 static int          g_fps;
 static enum qrcodegen_Ecc g_ecl;
 
+/* Off-screen back buffer — drawn to once per frame, then blitted to avoid flicker */
+static HDC     g_memDC   = NULL;
+static HBITMAP g_memBmp  = NULL;
+static HBITMAP g_memOld  = NULL;
+static int     g_memW    = 0;
+static int     g_memH    = 0;
+
 /* ========================================================================
  *  Generate one frame's worth of QR text (base64 of one fountain block)
  * ======================================================================== */
@@ -290,8 +297,23 @@ static LRESULT CALLBACK qrWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         GetClientRect(hwnd, &rc);
         int cx = (rc.right - rc.left) / 2;
 
+        /* (Re)create the off-screen buffer to match the client area, then draw only into it */
+        if (!g_memDC || g_memW != rc.right - rc.left || g_memH != rc.bottom - rc.top) {
+            if (g_memDC) {
+                SelectObject(g_memDC, g_memOld);
+                DeleteObject(g_memBmp);
+                DeleteDC(g_memDC);
+            }
+            g_memW   = rc.right - rc.left;
+            g_memH   = rc.bottom - rc.top;
+            g_memDC  = CreateCompatibleDC(hdc);
+            g_memBmp = CreateCompatibleBitmap(hdc, g_memW, g_memH);
+            g_memOld = (HBITMAP)SelectObject(g_memDC, g_memBmp);
+        }
+        HDC mdc = g_memDC;
+
         /* Background */
-        FillRect(hdc, &rc, (HBRUSH)(COLOR_WINDOW + 1));
+        FillRect(mdc, &rc, (HBRUSH)(COLOR_WINDOW + 1));
 
         /* Generate and encode */
         char qrtext[4096];
@@ -318,7 +340,7 @@ static LRESULT CALLBACK qrWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             RECT bg = {x0 - scale * 2, y0 - scale * 2,
                        x0 + qrPix + scale * 2, y0 + qrPix + scale * 2};
             HBRUSH hW = CreateSolidBrush(RGB(255, 255, 255));
-            FillRect(hdc, &bg, hW);
+            FillRect(mdc, &bg, hW);
             DeleteObject(hW);
 
             /* Black modules */
@@ -328,23 +350,23 @@ static LRESULT CALLBACK qrWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     if (qrcodegen_getModule(qrcode, x, y)) {
                         RECT m = {x0 + x * scale, y0 + y * scale,
                                   x0 + (x + 1) * scale, y0 + (y + 1) * scale};
-                        FillRect(hdc, &m, hB);
+                        FillRect(mdc, &m, hB);
                     }
             DeleteObject(hB);
 
             /* QR version label */
             char verlbl[32];
             sprintf(verlbl, "v%d  %dx%d", (sz - 17) / 4, sz, sz);
-            SetBkMode(hdc, TRANSPARENT);
-            SetTextColor(hdc, RGB(100, 100, 100));
+            SetBkMode(mdc, TRANSPARENT);
+            SetTextColor(mdc, RGB(100, 100, 100));
             RECT vrc = {x0, y0 + qrPix + 4, x0 + qrPix, y0 + qrPix + 20};
-            DrawTextA(hdc, verlbl, -1, &vrc, DT_CENTER | DT_SINGLELINE);
+            DrawTextA(mdc, verlbl, -1, &vrc, DT_CENTER | DT_SINGLELINE);
         }
 
         /* Status bar at bottom */
         int textY = QR_AREA + 30;
-        SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, RGB(0, 0, 0));
+        SetBkMode(mdc, TRANSPARENT);
+        SetTextColor(mdc, RGB(0, 0, 0));
 
         char line1[512], line2[256];
         sprintf(line1, "%s  (%s)", g_filename, g_contentType);
@@ -352,9 +374,12 @@ static LRESULT CALLBACK qrWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g_frame, g_enc.slice_size, g_enc.k, g_fps);
 
         RECT tr1 = {10, textY, rc.right - 10, textY + 18};
-        DrawTextA(hdc, line1, -1, &tr1, DT_LEFT | DT_SINGLELINE);
+        DrawTextA(mdc, line1, -1, &tr1, DT_LEFT | DT_SINGLELINE);
         RECT tr2 = {10, textY + 20, rc.right - 10, textY + 38};
-        DrawTextA(hdc, line2, -1, &tr2, DT_LEFT | DT_SINGLELINE);
+        DrawTextA(mdc, line2, -1, &tr2, DT_LEFT | DT_SINGLELINE);
+
+        /* Single blit to screen — this is what removes the flicker */
+        BitBlt(hdc, 0, 0, g_memW, g_memH, mdc, 0, 0, SRCCOPY);
 
         EndPaint(hwnd, &ps);
         return 0;
@@ -370,6 +395,12 @@ static LRESULT CALLBACK qrWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_DESTROY:
         KillTimer(hwnd, TIMER_ID);
+        if (g_memDC) {
+            SelectObject(g_memDC, g_memOld);
+            DeleteObject(g_memBmp);
+            DeleteDC(g_memDC);
+            g_memDC = NULL;
+        }
         lt_free(&g_enc);
         PostQuitMessage(0);
         return 0;
