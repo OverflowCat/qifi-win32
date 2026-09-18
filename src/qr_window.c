@@ -319,14 +319,21 @@ static LRESULT CALLBACK qrWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         char qrtext[4096];
         generate_qr_text(qrtext, sizeof(qrtext));
 
+        /* Use encodeBinary to guarantee byte-for-byte preservation of the
+         * base64 string.  encodeText may choose numeric/alphanumeric mode
+         * which changes the QR codewords and can confuse the receiver's
+         * toUint8Array() decoder. */
         uint8_t qrcode[qrcodegen_BUFFER_LEN_MAX];
         uint8_t tempbuf[qrcodegen_BUFFER_LEN_MAX];
-        bool ok = qrcodegen_encodeText(qrtext, tempbuf, qrcode,
-                                        g_ecl,
-                                        qrcodegen_VERSION_MIN,
-                                        qrcodegen_VERSION_MAX,
-                                        qrcodegen_Mask_AUTO,
-                                        false);
+        uint8_t databuf[qrcodegen_BUFFER_LEN_MAX];
+        int textLen = (int)strlen(qrtext);
+        memcpy(databuf, qrtext, textLen);
+        bool ok = qrcodegen_encodeBinary(databuf, textLen, qrcode,
+                                          g_ecl,
+                                          qrcodegen_VERSION_MIN,
+                                          qrcodegen_VERSION_MAX,
+                                          qrcodegen_Mask_AUTO,
+                                          false);
 
         if (ok) {
             int sz    = qrcodegen_getSize(qrcode);
@@ -416,7 +423,12 @@ static LRESULT CALLBACK qrWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 bool qr_window_run(const char *filepath, const QifiSettings *settings) {
     init_crc32();
-    srand((unsigned)time(NULL));
+
+    /* Seed PRNG with high-resolution timer + PID for uniqueness across
+     * rapid restarts.  time(NULL) only changes once per second which
+     * would produce identical block sequences if the user restarts
+     * within the same second. */
+    srand((unsigned)(GetTickCount() ^ GetCurrentProcessId() ^ (uintptr_t)filepath));
 
     g_fps   = settings->fps;
     g_prefix = settings->prefix;
